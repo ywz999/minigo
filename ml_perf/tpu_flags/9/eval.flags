@@ -1,0 +1,11 @@
+# Flags for eval.
+
+# This flagfile also serves as the base for the boostrap & eval stages of
+# the RL loop.
+
+--engine=tpu
+--num_readouts=160
+--virtual_losses=8
+--value_init_penalty=2
+--resign_threshold=-0.99
+--tpu_name=grpc://10.0.101.3:8470

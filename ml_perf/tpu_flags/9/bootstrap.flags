@@ -1,0 +1,12 @@
+# Flags for the first bootstrap round of selfplay.
+
+--flagfile=ml_perf/tpu_flags/9/selfplay.flags
+
+# Use a fake model that produces random values.
+--engine=random
+
+# Don't perform holdout for the first bootstrap round.
+--holdout_pct=0
+
+# Don't look for signal in what is known to be noise.
+--num_readouts=50
