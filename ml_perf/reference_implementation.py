@@ -194,7 +194,7 @@ def evaluate(state):
       '--model_two={}.pb'.format(best_model_path),
       '--sgf_dir={}'.format(sgf_dir),
       '--seed={}'.format(state.seed))
-  result = get_lines(result, make_slice[-7:])
+  result = get_lines(result, make_slice[-12:])
   logging.info(result)
   pattern = '{}\s+\d+\s+(\d+\.\d+)%'.format(eval_model)
   win_rate = float(re.search(pattern, result).group(1)) * 0.01
@@ -259,21 +259,24 @@ def rl_loop():
 def main(unused_argv):
   """Run the reinforcement learning loop."""
 
-  print('Wiping dir %s' % FLAGS.base_dir, flush=True)
-  shutil.rmtree(FLAGS.base_dir, ignore_errors=True)
-
-  utils.ensure_dir_exists(fsdb.models_dir())
-  utils.ensure_dir_exists(fsdb.selfplay_dir())
-  utils.ensure_dir_exists(fsdb.holdout_dir())
-  utils.ensure_dir_exists(fsdb.eval_dir())
-  utils.ensure_dir_exists(fsdb.golden_chunk_dir())
-  utils.ensure_dir_exists(fsdb.working_dir())
+  base_dir = fsdb.base_dir()
+  print('Base_dir %s' % base_dir, flush=True)
+  if tf.gfile.Exists(base_dir):
+    tf.gfile.DeleteRecursively(base_dir)
+     
+  tf.gfile.MakeDirs(fsdb.base_dir())
+  tf.gfile.MakeDirs(fsdb.models_dir())
+  tf.gfile.MakeDirs(fsdb.selfplay_dir())
+  tf.gfile.MakeDirs(fsdb.holdout_dir())
+  tf.gfile.MakeDirs(fsdb.eval_dir())
+  tf.gfile.MakeDirs(fsdb.golden_chunk_dir())
+  tf.gfile.MakeDirs(fsdb.working_dir())
 
   # Copy the target model to the models directory so we can find it easily.
-  shutil.copy('ml_perf/target.pb', fsdb.models_dir())
+  tf.gfile.Copy('ml_perf/target.pb', fsdb.models_dir() + '/target.pb')
 
   logging.getLogger().addHandler(
-      logging.FileHandler(os.path.join(FLAGS.base_dir, 'reinforcement.log')))
+      logging.FileHandler(os.path.join(FLAGS.log_dir, 'reinforcement.log')))
   formatter = logging.Formatter('[%(asctime)s] %(message)s',
                                 '%Y-%m-%d %H:%M:%S')
   for handler in logging.getLogger().handlers:

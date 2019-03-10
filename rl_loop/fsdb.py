@@ -66,7 +66,7 @@ eval_dir = _with_base('sgf', 'eval')
 golden_chunk_dir = _with_base('data', 'golden_chunks')
 flags_path = _with_base('flags.txt')
 eval_flags_path = _with_base('eval-flags.txt')
-
+base_dir = _with_base('')
 
 def get_pbs():
     all_pbs = gfile.Glob(os.path.join(models_dir(), '*.pb'))

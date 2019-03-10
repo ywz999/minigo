@@ -111,8 +111,17 @@ quality progress over time:
      4h           x%
      8h           x%
 ```
-
 Note that quality does not necessarily monotonically increase.
-
 ### Target evaluation frequency
 Target evaluation only needs to be performed for models which pass model evaluation.
+
+# 5. Google Cloud TPU
+```
+    # Modify the flag files to add your TPU name
+    modify the flag files under ml_perf/tpu_flags/9/
+    and replace string "--tpu_name=grpc://10.0.101.3:8470" with the ip address of your own TPU.
+
+    # Running on Google Cloud TPU
+    BOARD_SIZE=9  python3 ml_perf/reference_implementation.py  --bucket_name=<bucket/folder>\
+      --flagfile=ml_perf/tpu_flags/9/rl_loop.flags --log_dir=<local log dir>
+```

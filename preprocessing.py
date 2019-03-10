@@ -221,6 +221,11 @@ def get_tpu_input_tensors(batch_size, tf_records, num_repeats=1,
         shuffle_buffer_size=None,
         filter_amount=filter_amount,
         interleave=False)
+    if batch_size > len(tf_records):
+      dataset = dataset.repeat(batch_size)
+    else:
+      dataset = dataset.repeat(num_repeats)
+
     dataset = dataset.filter(lambda t: tf.equal(tf.shape(t)[0], batch_size))
     dataset = dataset.map(
         functools.partial(batch_parse_tf_example, batch_size))
