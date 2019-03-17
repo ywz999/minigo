@@ -5,7 +5,7 @@
 
 --engine=tpu
 --num_readouts=160
---virtual_losses=8
+--virtual_losses=16
 --value_init_penalty=2
 --resign_threshold=-0.99
 --tpu_name=grpc://10.0.101.3:8470

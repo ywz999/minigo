@@ -71,6 +71,8 @@ class Random {
 
   uint64_t seed() const { return seed_; }
 
+  void ResetSeed(uint64_t seed) { seed_ = seed; }
+
  private:
   uint64_t seed_;
   std::mt19937 impl_;
