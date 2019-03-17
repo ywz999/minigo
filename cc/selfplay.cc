@@ -267,7 +267,7 @@ class SelfPlayer {
   // update the command line arguments from a flag file without causing any
   // race conditions.
   struct ThreadOptions {
-    void Init(int thread_id) {
+    void Init(int thread_id, Random* rnd) {
       ParseOptionsFromFlags(&game_options, &player_options);
       player_options.verbose = thread_id == 0;
       // If an random seed was explicitly specified, make sure we use a
@@ -275,8 +275,7 @@ class SelfPlayer {
       if (player_options.random_seed != 0) {
         player_options.random_seed += 1299283 * thread_id;
       }
-      rnd_.ResetSeed(player_options.random_seed);
-      game_options.resign_enabled = rnd_() >= FLAGS_disable_resign_pct;
+      game_options.resign_enabled = (*rnd)() >= FLAGS_disable_resign_pct;
 
       holdout_pct = FLAGS_holdout_pct;
       output_dir = FLAGS_output_dir;
@@ -290,7 +289,6 @@ class SelfPlayer {
     std::string output_dir;
     std::string holdout_dir;
     std::string sgf_dir;
-    Random rnd_;
   };
 
   void ThreadRun(int thread_id) {
@@ -320,18 +318,12 @@ class SelfPlayer {
           if (num_remaining_games_ == 0) {
             break;
           }
-	  { 
-            absl::MutexLock lock(&mutex_);
-            num_remaining_games_ -= 1;
-	  }
+          num_remaining_games_ -= 1;
         }
 
-        if (!FLAGS_flags_path.empty()) {
-          absl::MutexLock lock(&mutex_);
-
-          auto old_model = FLAGS_model;
-          MaybeReloadFlags();
-	  MG_CHECK(old_model == FLAGS_model)
+        auto old_model = FLAGS_model;
+        MaybeReloadFlags();
+        MG_CHECK(old_model == FLAGS_model)
             << "Manually changing the model during selfplay is not supported.";
         thread_options.Init(thread_id, &rnd_);
         game = absl::make_unique<Game>(model_, model_,
@@ -368,6 +360,7 @@ class SelfPlayer {
       {
         // Log the end game info with the shared mutex held to prevent the
         // outputs from multiple threads being interleaved.
+        absl::MutexLock lock(&mutex_);
         LogEndGameInfo(*game, absl::Now() - start_time);
         win_stats_.Update(*game);
       }
@@ -376,7 +369,11 @@ class SelfPlayer {
       auto now = absl::Now();
       auto output_name = GetOutputName(now, thread_id);
 
-      bool is_holdout = thread_options.rnd_() < thread_options.holdout_pct;
+      bool is_holdout;
+      {
+        absl::MutexLock lock(&mutex_);
+        is_holdout = rnd_() < thread_options.holdout_pct;
+      }
       auto example_dir =
           is_holdout ? thread_options.holdout_dir : thread_options.output_dir;
       if (!example_dir.empty()) {
@@ -449,10 +446,11 @@ class SelfPlayer {
 
   absl::Mutex mutex_;
   std::unique_ptr<BatchingDualNetFactory> batcher_ GUARDED_BY(&mutex_);
+  Random rnd_ GUARDED_BY(&mutex_);
   std::vector<std::thread> threads_;
 
   // True if we should run selfplay indefinitely.
-  bool run_forever_ = false;
+  bool run_forever_ GUARDED_BY(&mutex_) = false;
 
   // If run_forever_ is false, how many games are left to play.
   int num_remaining_games_ GUARDED_BY(&mutex_) = 0;
