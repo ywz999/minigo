@@ -200,6 +200,9 @@ void LogEndGameInfo(const Game& game, absl::Duration game_time) {
 
 class SelfPlayer {
  public:
+  explicit SelfPlayer(ModelDescriptor desc)
+      : engine_(std::move(desc.engine)), model_(std::move(desc.model)) {}
+
   void Run() {
     auto start_time = absl::Now();
 
@@ -209,7 +212,7 @@ class SelfPlayer {
     int num_games = 0;
     if (run_forever_) {
       MG_CHECK(FLAGS_num_games == 0)
-            << "num_games must not be set if run_forever is true";
+          << "num_games must not be set if run_forever is true";
     } else {
       if (FLAGS_num_games == 0) {
         num_games = FLAGS_parallel_games;
@@ -225,11 +228,11 @@ class SelfPlayer {
 
     {
       absl::MutexLock lock(&mutex_);
-      auto model_factory = NewDualNetFactory(FLAGS_seed);
+      auto model_factory = NewDualNetFactory(engine_);
       // If the model path contains a pattern, wrap the implementation factory
       // in a ReloadingDualNetFactory to automatically reload the latest model
       // that matches the pattern.
-      if (FLAGS_model.find("%d") != std::string::npos) {
+      if (model_.find("%d") != std::string::npos) {
         model_factory = absl::make_unique<ReloadingDualNetFactory>(
             std::move(model_factory), absl::Seconds(3));
       }
@@ -250,6 +253,12 @@ class SelfPlayer {
 
     MG_LOG(INFO) << "Played " << num_games << " games, total time "
                  << absl::ToDoubleSeconds(absl::Now() - start_time) << " sec.";
+
+    {
+      absl::MutexLock lock(&mutex_);
+      auto model_name = batcher_->NewDualNet(model_)->name();
+      MG_LOG(INFO) << FormatWinStatsTable({{model_name, win_stats_}});
+    }
   }
 
  private:
@@ -303,9 +312,12 @@ class SelfPlayer {
       std::unique_ptr<Game> game;
       std::unique_ptr<MctsPlayer> player;
 
-	// Check if we've finished playing.
-	if (!run_forever_) {
-	  if (num_remaining_games_ == 0) {
+      {
+        absl::MutexLock lock(&mutex_);
+
+        // Check if we've finished playing.
+        if (!run_forever_) {
+          if (num_remaining_games_ == 0) {
             break;
           }
 	  { 
@@ -321,24 +333,19 @@ class SelfPlayer {
           MaybeReloadFlags();
 	  MG_CHECK(old_model == FLAGS_model)
             << "Manually changing the model during selfplay is not supported.";
-	}
-	
-        thread_options.Init(thread_id);
-        game = absl::make_unique<Game>(FLAGS_model, FLAGS_model,
-                                       thread_options.game_options); 
-
-      {
-        absl::MutexLock lock(&mutex_);
-        player = absl::make_unique<MctsPlayer>(
-            batcher_->NewDualNet(FLAGS_model), nullptr, game.get(),
-            thread_options.player_options);
+        thread_options.Init(thread_id, &rnd_);
+        game = absl::make_unique<Game>(model_, model_,
+                                       thread_options.game_options);
+        player = absl::make_unique<MctsPlayer>(batcher_->NewDualNet(model_),
+                                               nullptr, game.get(),
+                                               thread_options.player_options);
       }
 
       // Play the game.
       auto start_time = absl::Now();
       {
         absl::MutexLock lock(&mutex_);
-        batcher_->StartGame(player->network(), player->network());
+        BatchingDualNetFactory::StartGame(player->network(), player->network());
       }
       while (!game->game_over() && !player->root()->at_move_limit()) {
         auto move = player->SuggestMove();
@@ -355,13 +362,14 @@ class SelfPlayer {
       }
       {
         absl::MutexLock lock(&mutex_);
-        batcher_->EndGame(player->network(), player->network());
+        BatchingDualNetFactory::EndGame(player->network(), player->network());
       }
 
       {
         // Log the end game info with the shared mutex held to prevent the
         // outputs from multiple threads being interleaved.
         LogEndGameInfo(*game, absl::Now() - start_time);
+        win_stats_.Update(*game);
       }
 
       // Write the outputs.
@@ -449,7 +457,13 @@ class SelfPlayer {
   // If run_forever_ is false, how many games are left to play.
   int num_remaining_games_ GUARDED_BY(&mutex_) = 0;
 
+  // Stats about how every game was won.
+  WinStats win_stats_ GUARDED_BY(&mutex_);
+
   uint64_t flags_timestamp_ = 0;
+
+  const std::string engine_;
+  const std::string model_;
 };
 
 }  // namespace
@@ -458,7 +472,7 @@ class SelfPlayer {
 int main(int argc, char* argv[]) {
   minigo::Init(&argc, &argv);
   minigo::zobrist::Init(FLAGS_seed * 614944751);
-  minigo::SelfPlayer player;
+  minigo::SelfPlayer player(minigo::ParseModelDescriptor(FLAGS_model));
   player.Run();
   return 0;
 }

@@ -30,7 +30,7 @@
 namespace minigo {
 
 std::ostream& operator<<(std::ostream& os, const MctsPlayer::Options& options) {
-  os << "name:" << options.name << " inject_noise:" << options.inject_noise
+  os << " inject_noise:" << options.inject_noise
      << " soft_pick:" << options.soft_pick
      << " random_symmetry:" << options.random_symmetry
      << " value_init_penalty:" << options.value_init_penalty
@@ -305,7 +305,10 @@ bool MctsPlayer::PlayMove(Coord c) {
   }
 
   // Handle consecutive passing or termination by move limit.
-  if (root_->game_over() || root_->at_move_limit()) {
+  if (root_->at_move_limit()) {
+    game_->SetGameOverBecauseMoveLimitReached(
+        root_->position.CalculateScore(game_->options().komi));
+  } else if (root_->game_over()) {
     game_->SetGameOverBecauseOfPasses(
         root_->position.CalculateScore(game_->options().komi));
   }
@@ -414,12 +417,13 @@ void MctsPlayer::ProcessLeaves(absl::Span<TreePath> paths,
   }
 
   // Run inference.
-  network_->RunMany(std::move(feature_ptrs), std::move(output_ptrs), &model_);
+  network_->RunMany(std::move(feature_ptrs), std::move(output_ptrs),
+                    &inference_model_);
 
   // Record some information about the inference.
-  if (!model_.empty()) {
-    if (inferences_.empty() || model_ != inferences_.back().model) {
-      inferences_.emplace_back(model_, root_->position.n());
+  if (!inference_model_.empty()) {
+    if (inferences_.empty() || inference_model_ != inferences_.back().model) {
+      inferences_.emplace_back(inference_model_, root_->position.n());
     }
     inferences_.back().last_move = root_->position.n();
     inferences_.back().total_count += paths.size();

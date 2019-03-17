@@ -66,10 +66,7 @@ DEFINE_string(model, "",
               "inference engine. If parallel_games=1, this model is used for "
               "black. For engine=tf, the model should be a GraphDef proto. For "
               "engine=lite, the model should be .tflite flatbuffer.");
-DEFINE_string(model_two, "",
-              "Provide a path to a second minigo model, also serialized as a "
-              "GraphDef proto. If parallel_games=1, this model is used for "
-              "white.");
+DEFINE_string(model_two, "", "Descriptor for the second model");
 DEFINE_int32(parallel_games, 32, "Number of games to play in parallel.");
 
 // Output flags.
@@ -98,25 +95,58 @@ void ParseOptionsFromFlags(Game::Options* game_options,
 }
 
 class Evaluator {
-  struct Model {
-    explicit Model(const std::string& path)
-        : path(path), name(file::Stem(path)), black_wins(0), white_wins(0) {}
-    const std::string path;
-    const std::string name;
-    std::atomic<int> black_wins;
-    std::atomic<int> white_wins;
+  class Model {
+   public:
+    Model(BatchingDualNetFactory* batcher, const std::string& path)
+        : batcher_(batcher),
+          path_(path),
+          name_(batcher->NewDualNet(path)->name()) {}
+
+    BatchingDualNetFactory* batcher() { return batcher_; }
+    const std::string& name() const { return name_; }
+    const std::string& path() const { return path_; }
+
+    WinStats GetWinStats() const {
+      absl::MutexLock lock(&mutex_);
+      return win_stats_;
+    }
+
+    void UpdateWinStats(const Game& game) {
+      absl::MutexLock lock(&mutex_);
+      win_stats_.Update(game);
+    }
+
+   private:
+    mutable absl::Mutex mutex_;
+    BatchingDualNetFactory* batcher_;
+    const std::string path_;
+    const std::string name_;
+    WinStats win_stats_ GUARDED_BY(&mutex_);
   };
 
  public:
+  Evaluator(ModelDescriptor desc_a, ModelDescriptor desc_b)
+      : desc_a_(std::move(desc_a)), desc_b_(std::move(desc_b)) {
+    // Create a batcher for the first model.
+    batchers_.push_back(absl::make_unique<BatchingDualNetFactory>(
+        NewDualNetFactory(desc_a_.engine)));
+
+    // If the second model requires a different factory, create one & a second
+    // batcher too.
+    if (desc_b_.engine != desc_a_.engine) {
+      batchers_.push_back(absl::make_unique<BatchingDualNetFactory>(
+          NewDualNetFactory(desc_b_.engine)));
+    }
+  }
+
   void Run() {
     auto start_time = absl::Now();
-    BatchingDualNetFactory batcher(NewDualNetFactory(FLAGS_seed));
 
-    Model model_a(FLAGS_model);
-    Model model_b(FLAGS_model_two);
+    Model model_a(batchers_.front().get(), desc_a_.model);
+    Model model_b(batchers_.back().get(), desc_b_.model);
 
-    MG_LOG(INFO) << "DualNet factories created from " << FLAGS_model
-                 << "\n  and " << FLAGS_model_two << " in "
+    MG_LOG(INFO) << "DualNet factories created from " << desc_a_ << "\n  and "
+                 << desc_b_ << " in "
                  << absl::ToDoubleSeconds(absl::Now() - start_time) << " sec.";
 
     ParseOptionsFromFlags(&game_options_, &player_options_);
@@ -125,9 +155,8 @@ class Evaluator {
     for (int thread_id = 0; thread_id < num_games; ++thread_id) {
       bool swap_models = (thread_id & 1) != 0;
       threads_.emplace_back(std::bind(&Evaluator::ThreadRun, this, thread_id,
-                                      &batcher,
-                                      swap_models ? &model_a : &model_b,
-                                      swap_models ? &model_b : &model_a));
+                                      swap_models ? &model_b : &model_a,
+                                      swap_models ? &model_a : &model_b));
     }
     for (auto& t : threads_) {
       t.join();
@@ -136,32 +165,17 @@ class Evaluator {
     MG_LOG(INFO) << "Evaluated " << num_games << " games, total time "
                  << (absl::Now() - start_time);
 
-    auto name_length = std::max(model_a.name.size(), model_b.name.size());
-    auto format_name = [&](const std::string& name) {
-      return absl::StrFormat("%-*s", name_length, name);
-    };
-    auto format_wins = [&](int wins) {
-      return absl::StrFormat(" %5d %6.2f%%", wins, wins * 100.0f / num_games);
-    };
-    auto print_result = [&](const Model& model) {
-      MG_LOG(INFO) << format_name(model.name)
-                   << format_wins(model.black_wins + model.white_wins)
-                   << format_wins(model.black_wins)
-                   << format_wins(model.white_wins);
-    };
-
-    MG_LOG(INFO) << format_name("Wins")
-                 << "        Total         Black         White";
-    print_result(model_a);
-    print_result(model_b);
-    MG_LOG(INFO) << format_name("") << "              "
-                 << format_wins(model_a.black_wins + model_b.black_wins)
-                 << format_wins(model_a.white_wins + model_b.white_wins);
+    MG_LOG(INFO) << FormatWinStatsTable(
+        {{model_a.name(), model_a.GetWinStats()},
+         {model_b.name(), model_b.GetWinStats()}});
   }
 
  private:
-  void ThreadRun(int thread_id, BatchingDualNetFactory* batcher,
-                 Model* black_model, Model* white_model) {
+  void ThreadRun(int thread_id, Model* black_model, Model* white_model) {
+    // Only print the board using ANSI colors if stderr is sent to the
+    // terminal.
+    const bool use_ansi_colors = FdSupportsAnsiColors(fileno(stderr));
+
     // The player and other_player reference this pointer.
     std::unique_ptr<DualNet> dual_net;
 
@@ -174,7 +188,7 @@ class Evaluator {
       return;
     }
 
-    Game game(black_model->name, white_model->name, game_options_);
+    Game game(black_model->name(), white_model->name(), game_options_);
 
     auto player_options = player_options_;
     // If an random seed was explicitly specified, make sure we use a
@@ -185,18 +199,18 @@ class Evaluator {
 
     const bool verbose = thread_id == 0;
     player_options.verbose = false;
-    player_options.name = game.black_name();
     auto black = absl::make_unique<MctsPlayer>(
-        batcher->NewDualNet(black_model->path), nullptr, &game, player_options);
+        black_model->batcher()->NewDualNet(black_model->path()), nullptr, &game,
+        player_options);
 
     player_options.verbose = false;
-    player_options.name = game.white_name();
     auto white = absl::make_unique<MctsPlayer>(
-        batcher->NewDualNet(white_model->path), nullptr, &game, player_options);
+        white_model->batcher()->NewDualNet(white_model->path()), nullptr, &game,
+        player_options);
 
+    BatchingDualNetFactory::StartGame(black->network(), white->network());
     auto* curr_player = black.get();
     auto* next_player = white.get();
-    batcher->StartGame(curr_player->network(), next_player->network());
     while (!game.game_over() && !curr_player->root()->at_move_limit()) {
       auto move = curr_player->SuggestMove();
       if (verbose) {
@@ -210,16 +224,17 @@ class Evaluator {
         MG_LOG(INFO) << absl::StreamFormat(
             "%d: %s by %s\nQ: %0.4f", curr_player->root()->position.n(),
             move.ToGtp(), curr_player->name(), curr_player->root()->Q());
-        MG_LOG(INFO) << curr_player->root()->position.ToPrettyString();
+        MG_LOG(INFO) << curr_player->root()->position.ToPrettyString(
+            use_ansi_colors);
       }
       std::swap(curr_player, next_player);
     }
-    batcher->EndGame(curr_player->network(), next_player->network());
+    BatchingDualNetFactory::EndGame(black->network(), white->network());
 
     if (game.result() > 0) {
-      ++black_model->black_wins;
-    } else if (game.result() < 0) {
-      ++white_model->white_wins;
+      black_model->UpdateWinStats(game);
+    } else {
+      white_model->UpdateWinStats(game);
     }
 
     if (verbose) {
@@ -253,6 +268,10 @@ class Evaluator {
   Game::Options game_options_;
   MctsPlayer::Options player_options_;
   std::vector<std::thread> threads_;
+
+  const ModelDescriptor desc_a_;
+  const ModelDescriptor desc_b_;
+  std::vector<std::unique_ptr<BatchingDualNetFactory>> batchers_;
 };
 
 }  // namespace
@@ -261,7 +280,8 @@ class Evaluator {
 int main(int argc, char* argv[]) {
   minigo::Init(&argc, &argv);
   minigo::zobrist::Init(FLAGS_seed * 614944751);
-  minigo::Evaluator evaluator;
+  minigo::Evaluator evaluator(minigo::ParseModelDescriptor(FLAGS_model),
+                              minigo::ParseModelDescriptor(FLAGS_model_two));
   evaluator.Run();
   return 0;
 }
