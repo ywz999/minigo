@@ -23,6 +23,8 @@
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/strip.h"
+#include "absl/time/clock.h"
+
 #include "cc/constants.h"
 #include "cc/logging.h"
 #include "tensorflow/core/framework/graph.pb.h"
@@ -46,7 +48,7 @@ namespace minigo {
 namespace {
 // Use double buffering: one running the current set of batches, the other
 // filling up the next set of batches.
-constexpr int kBufferCount = 2;
+constexpr int kBufferCount = 20;
 
 // A GraphDef containing the ops required to initialize and shutdown a TPU.
 // This proto was generated from the script oneoffs/generate_tpu_graph_def.py.
@@ -114,7 +116,6 @@ TpuDualNet::Worker::~Worker() {
 void TpuDualNet::Worker::RunMany(std::vector<const BoardFeatures*> features,
                                  std::vector<Output*> outputs) {
   MG_CHECK(features.size() == outputs.size());
-
   size_t num_features = features.size();
   size_t batch_size = (num_features + num_replicas_ - 1) / num_replicas_;
   Reserve(batch_size);
@@ -163,7 +164,7 @@ void TpuDualNet::Worker::Reserve(size_t capacity) {
 
 TpuDualNet::TpuDualNet(const std::string& tpu_name,
                        const std::string& graph_path)
-    : graph_path_(graph_path) {
+    : DualNet(tpu_name), graph_path_(graph_path){
   // Make sure tpu_name looks like a valid name.
   MG_CHECK(absl::StartsWith(tpu_name, "grpc://"));
 

@@ -1,11 +1,7 @@
-# Flags for eval.
+# Flags for playing eval games.
 
-# This flagfile also serves as the base for the boostrap & eval stages of
-# the RL loop.
+--flagfile=ml_perf/tpu_flags/9/selfplay.flags
 
---engine=tpu
---num_readouts=160
---virtual_losses=16
---value_init_penalty=2
---resign_threshold=-0.99
---tpu_name=grpc://10.0.101.3:8470
+# Play fewer games for eval than selfplay.
+--num_games=100
+--parallel_games=100

@@ -202,7 +202,7 @@ async def checked_run(*cmd):
       raise RuntimeError('Return code {} from process: {}\n{}'.format(
           p.returncode, expand_cmd_str(cmd), stdout))
 
-    log_path = os.path.join(FLAGS.base_dir, get_cmd_name(cmd) + '.log')
+    log_path = os.path.join(FLAGS.log_dir, get_cmd_name(cmd) + '.log')
     with gfile.Open(log_path, 'a') as f:
       f.write(expand_cmd_str(cmd))
       f.write('\n')
@@ -276,7 +276,8 @@ async def selfplay(state, flagfile='selfplay'):
       '--output_dir={}'.format(output_dir),
       '--holdout_dir={}'.format(holdout_dir),
       '--seed={}'.format(state.seed))
-  result = '\n'.join(lines[-6:])
+  result = '\n'.join(lines[-12:])
+  print("result = ", result)
   logging.info(result)
   stats = parse_win_stats_table(result, 1)[0]
   num_games = stats.total_wins
@@ -322,7 +323,7 @@ async def train(state, tf_records):
   # Append the time elapsed from when the RL was started to when this model
   # was trained.
   elapsed = time.time() - state.start_time
-  timestamps_path = os.path.join(fsdb.models_dir(), 'train_times.txt')
+  timestamps_path = os.path.join(FLAGS.log_dir, 'train_times.txt')
   with gfile.Open(timestamps_path, 'a') as f:
     print('{:.3f} {}'.format(elapsed, state.train_model_name), file=f)
 
@@ -361,8 +362,8 @@ async def evaluate_model(eval_model_path, target_model_path, sgf_dir, seed):
       '--model={}'.format(eval_model_path),
       '--model_two={}'.format(target_model_path),
       '--sgf_dir={}'.format(sgf_dir),
-      '--seed={}'.format(state.seed))
-  result = get_lines(result, make_slice[-12:])
+      '--seed={}'.format(seed))
+  result = '\n'.join(lines[-12:])
   logging.info(result)
   eval_stats, target_stats = parse_win_stats_table(result, 2)
   num_games = eval_stats.total_wins + target_stats.total_wins
@@ -465,7 +466,7 @@ def main(unused_argv):
 
   # Copy the flag files so there's no chance of them getting accidentally
   # overwritten while the RL loop is running.
-  flags_dir = os.path.join(FLAGS.base_dir, 'flags')
+  flags_dir = os.path.join(base_dir, 'flags')
   shutil.copytree(FLAGS.flags_dir, flags_dir)
   FLAGS.flags_dir = flags_dir
 
@@ -473,11 +474,7 @@ def main(unused_argv):
   tf.gfile.Copy('ml_perf/target.pb', fsdb.models_dir() + '/target.pb')
 
   logging.getLogger().addHandler(
-<<<<<<< HEAD
-      logging.FileHandler(os.path.join(FLAGS.log_dir, 'reinforcement.log')))
-=======
-      logging.FileHandler(os.path.join(FLAGS.base_dir, 'rl_loop.log')))
->>>>>>> upstream/master
+      logging.FileHandler(os.path.join(FLAGS.log_dir, 'rl_loop.log')))
   formatter = logging.Formatter('[%(asctime)s] %(message)s',
                                 '%Y-%m-%d %H:%M:%S')
   for handler in logging.getLogger().handlers:

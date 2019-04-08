@@ -1,6 +1,3 @@
 # Flags for validation.
 
---flagfile=ml_perf/flags/9/architecture.flags
---use_tpu=true
---tpu_name=grpc://10.0.101.3:8470
---num_tpu_cores=8
+--flagfile=ml_perf/tpu_flags/9/architecture.flags

@@ -61,6 +61,8 @@ std::unique_ptr<DualNetFactory> NewDualNetFactory(
     absl::string_view engine_desc) {
   MG_CHECK(!engine_desc.empty());
 
+  std::cout << "..................." << engine_desc << std::endl;
+
   std::vector<absl::string_view> args = absl::StrSplit(engine_desc, ':');
   auto engine = args[0];
   args.erase(args.begin());
@@ -92,8 +94,10 @@ std::unique_ptr<DualNetFactory> NewDualNetFactory(
 
 #ifdef MG_ENABLE_TPU_DUAL_NET
   if (engine == "tpu") {
-    MG_CHECK(args.size() == 1);
-    return absl::make_unique<TpuDualNetFactory>(args[0]);
+	 std::cout << ".............." << args.size() << std::endl;
+	 std::cout << ".............." << args[1] << std::endl;
+    //MG_CHECK(args.size() == 1);
+    return absl::make_unique<TpuDualNetFactory>(std::string(args[0]) + ":" + std::string(args[1]) + ":" + std::string(args[2]));
   }
 #endif  // MG_ENABLE_TPU_DUAL_NET
 
